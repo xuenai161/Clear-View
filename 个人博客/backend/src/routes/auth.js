@@ -5,6 +5,18 @@ import db from '../db.js';
 import { authMiddleware } from '../middleware/auth.js';
 
 const router = express.Router();
+const oauthStates = new Map();
+
+function createOauthState() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+// 获取 GitHub OAuth state（防 CSRF）
+router.get('/github/state', (req, res) => {
+  const state = createOauthState();
+  oauthStates.set(state, Date.now() + 10 * 60 * 1000);
+  res.json({ state });
+});
 
 // 注册
 router.post('/register', async (req, res) => {
@@ -64,8 +76,14 @@ router.post('/login', async (req, res) => {
 // GitHub OAuth：前端拿到 code 后调用此接口交换 token 并获取用户信息
 router.post('/github/callback', async (req, res) => {
   try {
-    const { code } = req.body;
+    const { code, state } = req.body;
     if (!code) return res.status(400).json({ message: '缺少授权码' });
+    if (!state) return res.status(400).json({ message: '缺少 state 参数' });
+    const stateExpiresAt = oauthStates.get(state);
+    oauthStates.delete(state);
+    if (!stateExpiresAt || stateExpiresAt < Date.now()) {
+      return res.status(400).json({ message: 'OAuth state 无效或已过期' });
+    }
 
     if (!process.env.GITHUB_CLIENT_ID || !process.env.GITHUB_CLIENT_SECRET) {
       return res.status(400).json({ message: '后端未配置 GitHub OAuth' });
